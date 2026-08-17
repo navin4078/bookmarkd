@@ -48,12 +48,12 @@ function stats(state, provider) {
 
 async function handleSearch(req, res, state) {
   const body = await readJson(req);
-  const results = await search(state, body.q || "", {
+  const found = await search(state, body.q || "", {
     limit: body.limit || 40,
     filters: body.filters || {},
     semantic: body.semantic !== false,
   });
-  json(res, { results });
+  json(res, found);
 }
 
 async function handleAsk(req, res, state, provider) {
@@ -63,10 +63,19 @@ async function handleAsk(req, res, state, provider) {
   }
 
   // Retrieve a tight set: a long context makes the answer worse, not better.
-  const results = await search(state, body.q || "", {
+  const { results, confidence } = await search(state, body.q || "", {
     limit: 12,
     filters: body.filters || {},
   });
+
+  // Nothing relevant came back, so there is nothing for a model to answer from.
+  // Saying so directly beats paying for a paragraph that says the same thing.
+  if (confidence === "none") {
+    return json(res, {
+      empty: true,
+      message: "Nothing in your bookmarks relates to that.",
+    });
+  }
 
   res.writeHead(200, {
     "content-type": "text/event-stream",

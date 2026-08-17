@@ -1,6 +1,6 @@
 {
   "name": "bookmarkd",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI search over your own X/Twitter bookmarks. Runs entirely on your machine.",
   "type": "module",
   "author": "Navin Hemani",

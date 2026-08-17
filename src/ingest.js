@@ -67,10 +67,26 @@ function author(tweet) {
   };
 }
 
+/**
+ * X returns post text with HTML entities already encoded, so a post reading
+ * "in <1 hour" arrives as "in &lt;1 hour". Left alone it gets escaped a second
+ * time on the way to the browser and the reader sees the raw entity.
+ */
+function decodeEntities(input) {
+  return (input || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    // Ampersand last, so "&amp;lt;" does not become a working "<".
+    .replace(/&amp;/g, "&");
+}
+
 /** Long posts keep their full text in note_tweet; legacy.full_text is truncated. */
 function text(tweet) {
   const note = tweet?.note_tweet?.note_tweet_results?.result?.text;
-  return note || tweet?.legacy?.full_text || "";
+  return decodeEntities(note || tweet?.legacy?.full_text || "");
 }
 
 function media(tweet) {

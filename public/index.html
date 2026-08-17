@@ -90,6 +90,10 @@
   #answer h3 { margin: 0 0 9px; font-size: 11px; letter-spacing: .09em;
                text-transform: uppercase; color: var(--accent); }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  .caveat {
+    background: var(--chip); border-left: 3px solid var(--accent); border-radius: 8px;
+    padding: 11px 14px; margin-bottom: 13px; font-size: 13.5px; color: var(--muted);
+  }
 </style>
 </head>
 <body>
@@ -174,8 +178,16 @@ async function run() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ q, filters: handle ? { handle } : {} }),
   });
-  render((await response.json()).results);
+  const { results, confidence } = await response.json();
+  render(results, confidence);
 }
+
+// The ranking always produces a top result, so without this the best of a bad
+// set looks exactly like a real hit.
+const CAVEAT = {
+  none: "Nothing here matches that. The results below are the closest, and are probably not what you want.",
+  weak: "No strong match. These are near the subject but may not be the one you mean.",
+};
 
 async function runAsk(q) {
   $("answer").hidden = false;
@@ -187,6 +199,14 @@ async function runAsk(q) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ q, filters: handle ? { handle } : {} }),
   });
+
+  // Nothing relevant was retrieved, so the server answers directly instead of
+  // streaming a model paragraph that says the same thing.
+  if (response.headers.get("content-type")?.includes("application/json")) {
+    const payload = await response.json();
+    $("answerText").textContent = payload.message || payload.error || "No answer.";
+    return;
+  }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -215,12 +235,14 @@ async function runAsk(q) {
   }
 }
 
-function render(results) {
+function render(results, confidence) {
   if (!results?.length) {
     $("results").innerHTML = `<div class="empty">Nothing matched.</div>`;
     return;
   }
-  $("results").innerHTML = results.map(({ bookmark: b, matched }) => `
+  const caveat = CAVEAT[confidence]
+    ? `<div class="caveat">${CAVEAT[confidence]}</div>` : "";
+  $("results").innerHTML = caveat + results.map(({ bookmark: b, matched }) => `
     <article class="card">
       <div class="meta">
         ${b.avatar ? `<img src="${esc(b.avatar)}" alt="" loading="lazy">` : ""}

@@ -129,8 +129,24 @@ async function runSearch(query) {
   const state = load();
   if (!state) throw new Error("Nothing imported yet.");
 
-  const results = await search(state, query, { limit: 10 });
+  const { results, confidence, similarity } = await search(state, query, { limit: 10 });
   if (!results.length) return console.log("\n  Nothing matched.\n");
+
+  // Say plainly when the top result is only the best of a bad set, otherwise a
+  // confident looking list of wrong answers reads as a broken tool.
+  if (confidence === "none") {
+    console.log(
+      `\n  Nothing in your bookmarks matches this.` +
+      `\n  Showing the closest anyway, but expect them to be unrelated.`
+    );
+  } else if (confidence === "weak") {
+    console.log(
+      `\n  No strong match. These are near the subject but may not be the one you mean.`
+    );
+  }
+  if (process.env.BOOKMARKD_DEBUG && similarity != null) {
+    console.log(`  [similarity ${similarity.toFixed(3)}, ${confidence}]`);
+  }
 
   console.log("");
   for (const { bookmark } of results) {
@@ -154,7 +170,11 @@ async function runAsk(question) {
     );
   }
 
-  const results = await search(state, question, { limit: 12 });
+  const { results, confidence } = await search(state, question, { limit: 12 });
+  if (confidence === "none") {
+    return console.log("\n  Nothing in your bookmarks relates to that.\n");
+  }
+
   console.log("");
   for await (const chunk of ask(question, results, provider)) process.stdout.write(chunk);
   console.log("\n\n  Sources:");

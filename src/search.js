@@ -14,6 +14,35 @@ import { embedOne, rank } from "./embed.js";
  */
 const RRF_K = 60;
 
+/**
+ * How sure are we that anything here actually matches?
+ *
+ * The fused score only ranks results against each other, so the best of a bad
+ * set still comes out on top and looks identical to a real hit. That is the
+ * worst moment to say nothing, because the user concludes the tool is broken.
+ *
+ * Cosine similarity of the best semantic match is the usable signal, and these
+ * cut-offs were measured on a real 301 bookmark set rather than guessed:
+ *
+ *   genuine matches          0.55 to 0.67
+ *   right subject, absent    0.44   ("time travel video repo" against an AI corpus)
+ *   unrelated                0.20 to 0.25   (sourdough, puppy training, hotels)
+ *
+ * BM25 is deliberately not used for this. On the same set, "how to train a
+ * puppy not to bark" scored 8.39 against a genuine query's 8.48, because common
+ * words match plenty of documents while meaning nothing.
+ */
+const CONFIDENT = 0.5;
+const PLAUSIBLE = 0.35;
+
+function assess(topSimilarity, coverage, hasVectors) {
+  // With no embeddings the only honest signal is whether the words exist at all.
+  if (!hasVectors) return coverage === 0 ? "none" : "unknown";
+  if (topSimilarity >= CONFIDENT) return "strong";
+  if (topSimilarity >= PLAUSIBLE) return "weak";
+  return "none";
+}
+
 export async function search(state, query, options = {}) {
   const { limit = 30, filters = {}, semantic = true } = options;
   const { bookmarks, vectors, keyword } = state;
@@ -21,10 +50,11 @@ export async function search(state, query, options = {}) {
   const allowed = applyFilters(bookmarks, filters);
   if (!query?.trim()) {
     // No query: this is browsing, so newest first is the useful order.
-    return [...allowed]
+    const results = [...allowed]
       .sort((a, b) => (bookmarks[b].created_at || "").localeCompare(bookmarks[a].created_at || ""))
       .slice(0, limit)
       .map((index) => ({ bookmark: bookmarks[index], score: 0, matched: [] }));
+    return { results, confidence: "browse", similarity: null };
   }
 
   const pool = 200;
@@ -34,6 +64,12 @@ export async function search(state, query, options = {}) {
   if (semantic && vectors) {
     vectorHits = rank(vectors, await embedOne(query), pool);
   }
+
+  const terms = bm25.tokenize(query);
+  const known = terms.filter((t) => keyword.postings.has(t)).length;
+  const coverage = terms.length ? known / terms.length : 0;
+  const similarity = vectorHits[0]?.score ?? null;
+  const confidence = assess(similarity, coverage, Boolean(vectors && semantic));
 
   const fused = new Map();
   const add = (hits, source) => {
@@ -47,7 +83,7 @@ export async function search(state, query, options = {}) {
   add(keywordHits, "keyword");
   add(vectorHits, "meaning");
 
-  return [...fused.values()]
+  const results = [...fused.values()]
     .filter((entry) => allowed.has(entry.index))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
@@ -56,6 +92,8 @@ export async function search(state, query, options = {}) {
       score: entry.score,
       matched: entry.matched,
     }));
+
+  return { results, confidence, similarity };
 }
 
 function applyFilters(bookmarks, filters) {

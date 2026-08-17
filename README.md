@@ -99,6 +99,22 @@ Fusing ranks rather than raw scores means the two scales never have to be made
 comparable, which is the step that usually goes wrong. Each result card tells
 you which of the two found it.
 
+### It tells you when it found nothing
+
+Ranking always produces a top result, so the best of a bad set looks exactly
+like a real hit. That is the worst possible moment to stay quiet, because the
+reader concludes the tool is broken.
+
+So bookmarkd reports its own confidence. The cut-offs were measured on a real
+301 bookmark set rather than guessed: genuine matches score 0.55 to 0.67 cosine
+similarity, a query about the right subject that simply is not saved scores
+around 0.44, and unrelated queries score 0.20 to 0.25. Below 0.5 it says there
+is no strong match, and below 0.35 it says nothing matches at all.
+
+Keyword score is deliberately not used for this. On the same set "how to train
+a puppy not to bark" scored 8.39 against a genuine query's 8.48, because common
+words match plenty of documents while meaning nothing.
+
 Embeddings are `all-MiniLM-L6-v2` quantised to int8, running locally through
 transformers.js. About 25 MB, downloaded once. **No API key, no network calls
 after that first download.** Twenty thousand bookmarks embed in a few minutes
