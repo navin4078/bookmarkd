@@ -51,8 +51,36 @@ It self heals when X ships a change, because it never hardcodes what X ships.
 Nothing is uploaded. The snippet finishes by downloading a `bookmarks.json` to
 your own machine.
 
+It finds that request three ways, in order, because the obvious one fails often:
+
+1. **The browser's own performance log.** The page fetched your bookmarks when
+   it loaded, which is before you pasted anything, so watching alone would miss
+   it. The performance log still has the full URL.
+2. **Wrapping `fetch`** and nudging the page to load the next batch.
+3. **`window.BOOKMARKD_URL`**, if you set it yourself.
+
+Auth is the session you are already logged into: the public web bearer token
+that ships in X's own bundle, plus the CSRF value from your own `ct0` cookie.
+
 If you would rather read the snippet before pasting it, it is
-[`public/capture.js`](public/capture.js). It is about 150 lines.
+[`public/capture.js`](public/capture.js). It is about 200 lines.
+
+### When the page redirects
+
+Some accounts get bounced from `x.com/i/bookmarks` to somewhere else, and the
+bookmarks request never happens on that page load. Every path above then comes
+up empty.
+
+The fix takes about twenty seconds. With the bookmarks page open, open the
+Network tab, filter for `Bookmarks`, and reload. Right click the request that
+appears and copy its link address. Then paste this in the console before the
+snippet:
+
+```js
+window.BOOKMARKD_URL = "paste the copied URL here";
+```
+
+The snippet takes it from there and pages through everything as normal.
 
 ## How the search works
 

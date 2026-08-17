@@ -4,21 +4,30 @@
  *
  * How it works, and why it is built this way:
  *
- * X's bookmarks live behind a private GraphQL endpoint whose query ID changes
- * every time they deploy, and whose auth needs a bearer token plus a CSRF
- * header. Hard-coding any of that breaks within weeks.
+ * X keeps bookmarks behind a private GraphQL endpoint whose query ID and
+ * `features` blob change every time they deploy. Hard-coding either breaks
+ * within weeks, so this never hard-codes them. It finds the real request the
+ * page already makes, then replays that exact request with its own cursors to
+ * page through everything, instead of making you scroll for ten minutes.
  *
- * So this does not guess. It wraps window.fetch, waits for the page to make its
- * own bookmarks request, and learns the live URL and headers from it. Then it
- * replays that exact request with its own cursors to page through everything
- * quickly, instead of scrolling for ten minutes.
+ * There are three ways it finds that request, tried in order, because the one
+ * obvious way fails often:
  *
- * Nothing is uploaded. The result is a file that downloads to your machine.
+ *   1. The browser's own performance log. The page fetched your bookmarks when
+ *      it loaded, which is before you pasted this, so intercepting alone would
+ *      miss it. The performance log still has the full URL.
+ *   2. Wrapping fetch and nudging the page to load more.
+ *   3. window.BOOKMARKD_URL, if you set it yourself (see the README).
+ *
+ * Auth is the session you are already logged into: the public web bearer token
+ * plus the CSRF value from your own cookie. Nothing is uploaded, and the result
+ * downloads to your machine as bookmarks.json.
  */
 (async () => {
   "use strict";
 
-  if (!location.hostname.endsWith("x.com") && !location.hostname.endsWith("twitter.com")) {
+  const IS_X = /(^|\.)(x|twitter)\.com$/.test(location.hostname);
+  if (!IS_X) {
     alert("Run this on https://x.com/i/bookmarks while logged in.");
     return;
   }
@@ -27,66 +36,101 @@
   const box = document.createElement("div");
   box.style.cssText = [
     "position:fixed", "top:16px", "right:16px", "z-index:2147483647",
-    "background:#0b0b0f", "color:#e8e8ef", "font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace",
-    "padding:14px 16px", "border-radius:12px", "min-width:290px", "max-width:340px",
-    "box-shadow:0 10px 40px rgba(0,0,0,.5)", "border:1px solid #26263a", "white-space:pre-wrap",
+    "background:#0b0b0f", "color:#e8e8ef",
+    "font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace",
+    "padding:14px 16px", "border-radius:12px", "min-width:290px", "max-width:360px",
+    "box-shadow:0 10px 40px rgba(0,0,0,.5)", "border:1px solid #26263a",
+    "white-space:pre-wrap",
   ].join(";");
   document.body.appendChild(box);
   const say = (msg) => { box.textContent = "bookmarkd\n\n" + msg; };
-  say("waking up…");
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const IS_BOOKMARKS_URL = /\/graphql\/[^/]+\/Bookmarks\b/;
 
-  // -------------------------------------------------- learn the live request
+  say("looking for your bookmarks request…");
+
+  // ------------------------------------------------- 1. the performance log
   const original = window.fetch;
-  let learned = null;
+  let endpointUrl = window.BOOKMARKD_URL || null;
+  let learnedHeaders = null;
 
-  const readHeaders = (source) => {
-    const out = {};
-    if (!source) return out;
-    if (typeof source.forEach === "function" && !Array.isArray(source)) {
-      source.forEach((value, key) => (out[key.toLowerCase()] = value));
-      return out;
-    }
-    if (Array.isArray(source)) {
-      for (const [key, value] of source) out[String(key).toLowerCase()] = value;
-      return out;
-    }
-    for (const key of Object.keys(source)) out[key.toLowerCase()] = source[key];
-    return out;
-  };
+  if (!endpointUrl) {
+    endpointUrl = performance
+      .getEntriesByType("resource")
+      .map((entry) => entry.name)
+      .reverse()
+      .find((name) => IS_BOOKMARKS_URL.test(name)) || null;
+  }
 
-  window.fetch = function (input, init) {
-    try {
-      const url = typeof input === "string" ? input : input?.url;
-      if (url && /\/graphql\/[^/]+\/Bookmarks/.test(url) && !learned) {
-        const headers = {
-          ...readHeaders(typeof input === "object" ? input.headers : null),
-          ...readHeaders(init?.headers),
-        };
-        if (headers.authorization) learned = { url, headers };
+  // ------------------------------------------------------ 2. wrapping fetch
+  if (!endpointUrl) {
+    const readHeaders = (source) => {
+      const out = {};
+      if (!source) return out;
+      if (typeof source.forEach === "function" && !Array.isArray(source)) {
+        source.forEach((value, key) => (out[String(key).toLowerCase()] = value));
+      } else if (Array.isArray(source)) {
+        for (const [key, value] of source) out[String(key).toLowerCase()] = value;
+      } else {
+        for (const key of Object.keys(source)) out[key.toLowerCase()] = source[key];
       }
-    } catch { /* never break the page */ }
-    return original.apply(this, arguments);
-  };
+      return out;
+    };
 
-  // The page fires its own request when you scroll. Nudge it, then wait.
-  say("watching for the bookmarks request…\n\n(scrolling the page to trigger it)");
-  const nudge = setInterval(() => window.scrollBy(0, 2000), 900);
-  const deadline = Date.now() + 20000;
-  while (!learned && Date.now() < deadline) await sleep(250);
-  clearInterval(nudge);
-  window.fetch = original;
+    window.fetch = function (input, init) {
+      try {
+        const url = typeof input === "string" ? input : input?.url;
+        if (url && IS_BOOKMARKS_URL.test(url) && !endpointUrl) {
+          endpointUrl = url;
+          const headers = {
+            ...readHeaders(typeof input === "object" ? input.headers : null),
+            ...readHeaders(init?.headers),
+          };
+          if (headers.authorization) learnedHeaders = headers;
+        }
+      } catch { /* never break the page */ }
+      return original.apply(this, arguments);
+    };
 
-  if (!learned) {
+    say("watching for the bookmarks request…\n\n(scrolling to make the page load more)");
+    const nudge = setInterval(() => window.scrollBy(0, 2400), 900);
+    const deadline = Date.now() + 20000;
+    while (!endpointUrl && Date.now() < deadline) await sleep(250);
+    clearInterval(nudge);
+    window.fetch = original;
+  }
+
+  if (!endpointUrl) {
     say(
-      "Could not see a bookmarks request.\n\n" +
-      "Make sure you are on x.com/i/bookmarks and logged in,\n" +
-      "then reload the page and paste this again."
+      "Could not find a bookmarks request.\n\n" +
+      "Reload x.com/i/bookmarks, wait for your bookmarks to\n" +
+      "appear, then paste this again on the loaded page.\n\n" +
+      "If x.com/i/bookmarks redirects you somewhere else,\n" +
+      "see the README section 'when the page redirects'."
     );
     return;
   }
 
+  // ------------------------------------------------------------------ auth
+  // Prefer the headers the page itself used. Otherwise rebuild them: the web
+  // bearer is a public constant in X's own bundle, and the CSRF value is the
+  // ct0 cookie already set on this session.
+  const csrf = document.cookie.match(/ct0=([^;]+)/)?.[1];
+  const headers = learnedHeaders || {
+    authorization:
+      "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+    "x-csrf-token": csrf,
+    "x-twitter-active-user": "yes",
+    "x-twitter-auth-type": "OAuth2Session",
+    "content-type": "application/json",
+  };
+  if (!learnedHeaders && !csrf) {
+    say("You do not look logged in (no session cookie). Log in and try again.");
+    return;
+  }
+
   // ------------------------------------------------------------ page through
-  const endpoint = new URL(learned.url);
+  const endpoint = new URL(endpointUrl, location.origin);
   const baseVariables = JSON.parse(endpoint.searchParams.get("variables") || "{}");
 
   const requestPage = async (cursor, count) => {
@@ -96,7 +140,7 @@
     url.searchParams.set("variables", JSON.stringify(variables));
 
     const response = await original(url.toString(), {
-      headers: learned.headers,
+      headers,
       credentials: "include",
       referrer: location.href,
     });
@@ -112,27 +156,26 @@
     return response.json();
   };
 
+  const walk = (body, visit) => {
+    const timeline = body?.data?.bookmark_timeline_v2?.timeline
+      || body?.data?.bookmark_timeline?.timeline;
+    for (const instruction of timeline?.instructions || []) {
+      for (const entry of instruction.entries || []) visit(entry);
+    }
+  };
   const tweetCount = (body) => {
-    let total = 0;
-    for (const inst of body?.data?.bookmark_timeline_v2?.timeline?.instructions || []) {
-      for (const entry of inst.entries || []) {
-        if (entry?.content?.itemContent?.itemType === "TimelineTweet") total++;
-      }
-    }
-    return total;
+    let n = 0;
+    walk(body, (e) => { if (e?.content?.itemContent?.itemType === "TimelineTweet") n++; });
+    return n;
   };
-
   const bottomCursor = (body) => {
-    for (const inst of body?.data?.bookmark_timeline_v2?.timeline?.instructions || []) {
-      for (const entry of inst.entries || []) {
-        if (entry?.content?.cursorType === "Bottom") return entry.content.value;
-      }
-    }
-    return null;
+    let found = null;
+    walk(body, (e) => { if (e?.content?.cursorType === "Bottom") found = e.content.value; });
+    return found;
   };
 
-  // 100 per page instead of the UI's 20 means five times fewer requests, which
-  // matters because X rate-limits this endpoint. Fall back if it is rejected.
+  // 100 per page instead of the interface's 20 means five times fewer requests,
+  // which matters because X rate-limits this endpoint hard.
   let pageSize = 100;
   const pages = [];
   let cursor = null;
@@ -182,6 +225,4 @@
     "next:\n  npx bookmarkd import ~/Downloads/bookmarks.json\n  npx bookmarkd serve"
   );
   setTimeout(() => box.remove(), 60000);
-
-  function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 })();
