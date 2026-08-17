@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>bookmarkd</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --panel: #ffffff; --line: #e4e1da; --ink: #17171a;
+    --muted: #6e6c66; --accent: #b4491f; --chip: #f1efe9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0e11; --panel: #16161b; --line: #26262e; --ink: #eceae4;
+      --muted: #8d8b85; --accent: #e0794f; --chip: #1f1f26;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--bg);
+    border-bottom: 1px solid var(--line); padding: 18px 24px 14px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+  .brand h1 { font-size: 17px; margin: 0; letter-spacing: -.2px; font-weight: 650; }
+  .brand .dot { color: var(--accent); }
+  .brand small { color: var(--muted); font-size: 12.5px; }
+
+  .bar { display: flex; gap: 10px; align-items: stretch; max-width: 1080px; }
+  input[type=search] {
+    flex: 1; padding: 12px 15px; font-size: 15px; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+  }
+  input[type=search]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: 12px 18px; font-size: 14px; font-weight: 550; cursor: pointer;
+    background: var(--ink); color: var(--bg); border: 0; border-radius: 9px;
+  }
+  button.ghost {
+    background: var(--panel); color: var(--muted); border: 1px solid var(--line);
+  }
+  button.ghost[aria-pressed=true] { color: var(--accent); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+
+  main { display: grid; grid-template-columns: 190px 1fr; gap: 28px; max-width: 1140px; padding: 22px 24px 80px; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } aside { display: none; } }
+
+  aside h2 { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 0 0 9px; }
+  .who { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--muted);
+         padding: 4px 0; font-size: 13px; cursor: pointer; }
+  .who:hover { color: var(--ink); }
+  .who[aria-pressed=true] { color: var(--accent); font-weight: 600; }
+  .who span { float: right; opacity: .55; font-size: 11.5px; }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          padding: 15px 17px; margin-bottom: 11px; }
+  .meta { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; font-size: 13px; }
+  .meta img { width: 26px; height: 26px; border-radius: 50%; }
+  .meta b { font-weight: 600; }
+  .meta .at, .meta time { color: var(--muted); font-weight: 400; }
+  /* Bookmarked threads run long. Clamp them so ten results stay scannable,
+     and let a click open the one you actually want. */
+  .text { white-space: pre-wrap; word-wrap: break-word; position: relative; }
+  .text.clamped {
+    max-height: 190px; overflow: hidden; cursor: pointer;
+    -webkit-mask-image: linear-gradient(180deg, #000 130px, transparent);
+    mask-image: linear-gradient(180deg, #000 130px, transparent);
+  }
+  .more { display: none; }
+  .text.clamped + .more {
+    display: inline-block; margin-top: 6px; font-size: 12.5px;
+    color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0;
+  }
+  .thumbs { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+  .thumbs img { height: 92px; border-radius: 7px; border: 1px solid var(--line); }
+  .quoted { margin-top: 10px; padding: 9px 12px; border-left: 2px solid var(--line);
+            color: var(--muted); font-size: 14px; white-space: pre-wrap; }
+  .foot { display: flex; gap: 10px; align-items: center; margin-top: 11px;
+          font-size: 12px; color: var(--muted); }
+  .foot a { color: var(--accent); text-decoration: none; }
+  .chip { background: var(--chip); border-radius: 20px; padding: 2px 9px; font-size: 11px; }
+
+  #answer { background: var(--panel); border: 1px solid var(--accent); border-radius: 12px;
+            padding: 17px 19px; margin-bottom: 18px; white-space: pre-wrap; }
+  #answer h3 { margin: 0 0 9px; font-size: 11px; letter-spacing: .09em;
+               text-transform: uppercase; color: var(--accent); }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>bookmarkd<span class="dot">.</span></h1>
+    <small id="status">loading…</small>
+  </div>
+  <div class="bar">
+    <input type="search" id="q" placeholder="Search your bookmarks by meaning or by words…" autofocus>
+    <button id="go">Search</button>
+    <button class="ghost" id="askmode" aria-pressed="false" title="Answer the question using your bookmarks">Ask</button>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <h2>Accounts</h2>
+    <div id="authors"></div>
+  </aside>
+  <section>
+    <div id="answer" hidden><h3>Answer</h3><div id="answerText"></div></div>
+    <div id="results"><div class="empty">Type anything. Try a topic you half remember.</div></div>
+  </section>
+</main>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+let askMode = false;
+let handle = null;
+let stats = {};
+
+const esc = (s) => (s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+init();
+
+async function init() {
+  stats = await (await fetch("/api/stats")).json();
+  $("status").textContent =
+    `${stats.count.toLocaleString()} bookmarks · meaning search ${stats.semantic ? "on" : "off"}` +
+    (stats.provider ? ` · ask via ${stats.provider}` : "");
+  if (!stats.provider) {
+    $("askmode").disabled = true;
+    $("askmode").title = "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or run Ollama, to enable Ask";
+  }
+  $("authors").innerHTML = stats.authors.map((a) =>
+    `<button class="who" data-h="${esc(a.handle)}">@${esc(a.handle)}<span>${a.count}</span></button>`
+  ).join("");
+  $("authors").onclick = (event) => {
+    const button = event.target.closest(".who");
+    if (!button) return;
+    handle = handle === button.dataset.h ? null : button.dataset.h;
+    for (const el of $("authors").children) {
+      el.setAttribute("aria-pressed", String(el.dataset.h === handle));
+    }
+    run();
+  };
+
+  $("go").onclick = run;
+  $("q").onkeydown = (e) => { if (e.key === "Enter") run(); };
+  $("askmode").onclick = () => {
+    askMode = !askMode;
+    $("askmode").setAttribute("aria-pressed", String(askMode));
+    $("q").placeholder = askMode
+      ? "Ask a question — answered only from your bookmarks…"
+      : "Search your bookmarks by meaning or by words…";
+    $("q").focus();
+  };
+}
+
+async function run() {
+  const q = $("q").value.trim();
+  $("answer").hidden = true;
+  $("answerText").textContent = "";
+  if (askMode && q) return await runAsk(q);
+
+  $("results").innerHTML = `<div class="empty">searching…</div>`;
+  const response = await fetch("/api/search", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ q, filters: handle ? { handle } : {} }),
+  });
+  render((await response.json()).results);
+}
+
+async function runAsk(q) {
+  $("answer").hidden = false;
+  $("answerText").textContent = "thinking…";
+  $("results").innerHTML = "";
+
+  const response = await fetch("/api/ask", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ q, filters: handle ? { handle } : {} }),
+  });
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "", answer = "", started = false;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let split;
+    while ((split = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, split);
+      buffer = buffer.slice(split + 2);
+      const event = frame.match(/^event: (.+)$/m)?.[1];
+      const data = JSON.parse(frame.match(/^data: ([\s\S]+)$/m)?.[1] || "null");
+
+      if (event === "sources") render(data.map((bookmark) => ({ bookmark })));
+      if (event === "text") {
+        if (!started) { $("answerText").textContent = ""; started = true; }
+        answer += data;
+        $("answerText").textContent = answer;
+      }
+      if (event === "error") $("answerText").textContent = "Error: " + data.message;
+    }
+  }
+}
+
+function render(results) {
+  if (!results?.length) {
+    $("results").innerHTML = `<div class="empty">Nothing matched.</div>`;
+    return;
+  }
+  $("results").innerHTML = results.map(({ bookmark: b, matched }) => `
+    <article class="card">
+      <div class="meta">
+        ${b.avatar ? `<img src="${esc(b.avatar)}" alt="" loading="lazy">` : ""}
+        <b>${esc(b.name || b.handle)}</b>
+        <span class="at">@${esc(b.handle)}</span>
+        ${b.created_at ? `<time>· ${b.created_at.slice(0, 10)}</time>` : ""}
+      </div>
+      <div class="text${b.text.length > 420 ? " clamped" : ""}">${linkify(b.text)}</div>
+      <button class="more">show all ↓</button>
+      ${b.quoted ? `<div class="quoted">@${esc(b.quoted.handle)}: ${esc(b.quoted.text)}</div>` : ""}
+      ${b.media?.length ? `<div class="thumbs">${b.media
+        .filter((m) => m.thumb)
+        .map((m) => `<img src="${esc(m.thumb)}" alt="" loading="lazy">`).join("")}</div>` : ""}
+      <div class="foot">
+        <a href="${esc(b.url)}" target="_blank" rel="noreferrer">open on X ↗</a>
+        <span>${b.likes.toLocaleString()} likes</span>
+        ${matched?.length ? `<span class="chip">${matched.join(" + ")}</span>` : ""}
+      </div>
+    </article>`).join("");
+
+  $("results").onclick = (event) => {
+    const trigger = event.target.closest(".more, .text.clamped");
+    if (!trigger) return;
+    const card = trigger.closest(".card");
+    card.querySelector(".text").classList.remove("clamped");
+  };
+}
+
+function linkify(text) {
+  return esc(text).replace(/(https?:\/\/[^\s]+)/g,
+    (url) => `<a href="${url}" target="_blank" rel="noreferrer">${url}</a>`);
+}
+</script>
+</body>
+</html>

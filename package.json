@@ -1,0 +1,39 @@
+{
+  "name": "bookmarkd",
+  "version": "0.1.0",
+  "description": "AI search over your own X/Twitter bookmarks. Runs entirely on your machine.",
+  "type": "module",
+  "bin": {
+    "bookmarkd": "bin/bookmarkd.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "public",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node bin/bookmarkd.js serve"
+  },
+  "keywords": [
+    "twitter",
+    "x",
+    "bookmarks",
+    "search",
+    "semantic-search",
+    "embeddings",
+    "local-first",
+    "rag"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.6"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.70.0"
+  }
+}
