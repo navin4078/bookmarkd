@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "AI search over your own X/Twitter bookmarks. Runs entirely on your machine.",
   "type": "module",
+  "author": "Navin Hemani",
+  "homepage": "https://github.com/navin4078/bookmarkd#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/navin4078/bookmarkd.git"
+  },
+  "bugs": {
+    "url": "https://github.com/navin4078/bookmarkd/issues"
+  },
   "bin": {
     "bookmarkd": "bin/bookmarkd.js"
   },
